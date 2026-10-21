@@ -29,10 +29,10 @@ st.write(
     "un bateau ou une voiture."
 )
 
-st.caption(f"Version de Python : {sys.version.split()[0]}")
+st.caption(f"Version de Python utilisée : {sys.version.split()[0]}")
 
 # ============================================================
-# 2. CHARGEMENT DU MODELE
+# 2. CHEMIN ET CHARGEMENT DU MODELE
 # ============================================================
 
 MODEL_PATH = Path(__file__).parent / "modele_classification.pkl"
@@ -44,39 +44,45 @@ def charger_modele(chemin):
 
     if not isinstance(donnees, dict):
         raise ValueError(
-            "Le fichier du modèle ne contient pas le dictionnaire attendu."
+            "Le fichier PKL doit contenir un dictionnaire."
         )
 
-    model = donnees.get("model")
-    class_names = donnees.get("class_names")
-    model_name = donnees.get("model_name", "Modèle inconnu")
-
-    if model is None or class_names is None:
+    if "model" not in donnees or "class_names" not in donnees:
         raise ValueError(
-            "Le fichier doit contenir les clés 'model' et 'class_names'."
+            "Le fichier PKL doit contenir les clés "
+            "'model' et 'class_names'."
         )
 
-    return model, class_names, model_name
+    modele = donnees["model"]
+    class_names = donnees["class_names"]
+    nom_modele = donnees.get("model_name", "Modèle inconnu")
 
+    return modele, class_names, nom_modele
+
+
+if not MODEL_PATH.exists():
+    st.error(
+        f"Fichier du modèle introuvable : {MODEL_PATH.name}"
+    )
+    st.info(
+        "Vérifiez que le fichier PKL est présent dans le dépôt "
+        "GitHub et que son nom correspond exactement."
+    )
+    st.stop()
 
 try:
-    if not MODEL_PATH.exists():
-        st.error(f"Fichier modèle introuvable : {MODEL_PATH.name}")
-        st.info(
-            "Vérifiez le nom du fichier sur GitHub. "
-            "Il doit correspondre exactement à celui indiqué dans le code."
-        )
-        st.stop()
+    modele, class_names, nom_modele = charger_modele(
+        str(MODEL_PATH)
+    )
 
-    modele, class_names, nom_modele = charger_modele(str(MODEL_PATH))
-
-    st.success("Modèle chargé avec succès.")
+    st.success("Modèle chargé correctement.")
     st.caption(f"Modèle utilisé : {nom_modele}")
 
 except Exception as e:
     st.error("Impossible de charger le modèle.")
     st.exception(e)
     st.stop()
+
 
 # ============================================================
 # 3. EXTRACTION DES 67 CARACTERISTIQUES
@@ -85,7 +91,10 @@ except Exception as e:
 def extract_features(img):
     """
     img : image RGB de taille 32x32, valeurs entre 0 et 1.
-    Retourne 67 caractéristiques.
+
+    IMPORTANT :
+    cette fonction doit être identique à celle utilisée
+    pendant l'entraînement du modèle.
     """
 
     img8 = np.clip(img * 255, 0, 255).astype(np.uint8)
@@ -103,11 +112,9 @@ def extract_features(img):
         cv2.calcHist(
             [hsv], [0], None, [8], [0, 180]
         ).ravel(),
-
         cv2.calcHist(
             [hsv], [1], None, [8], [0, 256]
         ).ravel(),
-
         cv2.calcHist(
             [hsv], [2], None, [8], [0, 256]
         ).ravel()
@@ -122,7 +129,12 @@ def extract_features(img):
     glcm = graycomatrix(
         gray // 8,
         distances=[1],
-        angles=[0, np.pi / 4, np.pi / 2, 3 * np.pi / 4],
+        angles=[
+            0,
+            np.pi / 4,
+            np.pi / 2,
+            3 * np.pi / 4
+        ],
         levels=32,
         symmetric=True,
         normed=True
@@ -141,31 +153,60 @@ def extract_features(img):
 
     # 4. LBP : 10 caractéristiques
     lbp = local_binary_pattern(
-        gray, P=8, R=1, method="uniform"
+        gray,
+        P=8,
+        R=1,
+        method="uniform"
     )
 
     lbp_h, _ = np.histogram(
         lbp,
-        bins=np.arange(0, 12),
+        bins=np.arange(0, 11),
         density=True
     )
 
-    # Conserver 10 caractéristiques comme dans le modèle attendu
-    lbp_h = lbp_h[:10]
-
     # 5. Moments de Hu : 7 caractéristiques
-    hu = cv2.HuMoments(cv2.moments(gray)).ravel()
-    hu = -np.sign(hu) * np.log10(np.abs(hu) + 1e-12)
+    hu = cv2.HuMoments(
+        cv2.moments(gray)
+    ).ravel()
+
+    hu = -np.sign(hu) * np.log10(
+        np.abs(hu) + 1e-12
+    )
 
     features = np.concatenate([
-        rgb, hist, glcm_f, lbp_h, hu
+        rgb,
+        hist,
+        glcm_f,
+        lbp_h,
+        hu
     ])
 
     return features
 
 
 # ============================================================
-# 4. IMPORTATION DE L'IMAGE
+# 4. FONCTION POUR OBTENIR LE NOM D'UNE CLASSE
+# ============================================================
+
+def obtenir_nom_classe(classe):
+    if isinstance(class_names, dict):
+        if classe in class_names:
+            return str(class_names[classe])
+
+        if str(classe) in class_names:
+            return str(class_names[str(classe)])
+
+        return str(classe)
+
+    try:
+        return str(class_names[int(classe)])
+    except (ValueError, TypeError, IndexError):
+        return str(classe)
+
+
+# ============================================================
+# 5. IMPORTATION ET AFFICHAGE DE L'IMAGE
 # ============================================================
 
 fichier = st.file_uploader(
@@ -186,10 +227,20 @@ if fichier is not None:
             use_container_width=True
         )
 
-        st.write("Étape 2 : image chargée.")
+        st.write("Étape 2 : image chargée correctement.")
 
-        if st.button("Classer l'image", type="primary"):
+    except Exception as e:
+        st.error("Impossible de lire cette image.")
+        st.exception(e)
+        st.stop()
 
+    # ========================================================
+    # 6. CLASSIFICATION
+    # ========================================================
+
+    if st.button("Classer l'image", type="primary"):
+
+        try:
             st.write("Étape 3 : préparation de l'image.")
 
             img = np.array(image_pil)
@@ -207,71 +258,107 @@ if fichier is not None:
 
             if caracteristiques.shape[1] != 67:
                 st.error(
-                    "Le nombre de caractéristiques est incorrect. "
-                    "Le modèle attend 67 caractéristiques."
+                    f"Le modèle attend 67 caractéristiques, "
+                    f"mais {caracteristiques.shape[1]} ont été calculées."
                 )
                 st.stop()
 
-            st.write("Étape 5 : calcul de la prédiction.")
+            st.write("Étape 5 : prédiction.")
 
             prediction = modele.predict(caracteristiques)[0]
 
-            st.write("Valeur prédite :", str(prediction))
-            st.write("Classes du fichier :", str(class_names))
+            nom_prediction = obtenir_nom_classe(prediction)
 
-            # Traduire la valeur prédite en nom de classe
-            if isinstance(class_names, dict):
-                nom_classe = class_names.get(
-                    prediction,
-                    class_names.get(str(prediction), str(prediction))
+            st.success(
+                f"Classe prédite : **{nom_prediction}**"
+            )
+
+            # =================================================
+            # 7. DIAGNOSTIC DU MODELE
+            # =================================================
+
+            with st.expander("Diagnostic du modèle", expanded=True):
+
+                st.write("Nom du modèle :", nom_modele)
+                st.write(
+                    "Type du modèle :",
+                    type(modele).__name__
                 )
-            else:
-                try:
-                    nom_classe = class_names[int(prediction)]
-                except (ValueError, TypeError, IndexError):
-                    nom_classe = str(prediction)
-
-            st.success(f"Classe prédite : **{nom_classe}**")
-
-            # Probabilités de prédiction, si disponibles
-            if hasattr(modele, "predict_proba"):
-
-                probabilites = modele.predict_proba(
-                    caracteristiques
-                )[0]
-
-                st.subheader("Résultats par classe")
+                st.write(
+                    "Prédiction brute :",
+                    str(prediction)
+                )
+                st.write(
+                    "Classes affichées :",
+                    str(class_names)
+                )
 
                 if hasattr(modele, "classes_"):
-                    classes_modele = modele.classes_
-                else:
-                    classes_modele = range(len(probabilites))
+                    st.write(
+                        "Classes internes :",
+                        modele.classes_.tolist()
+                    )
 
-                for classe, proba in zip(
-                    classes_modele, probabilites
-                ):
-                    if isinstance(class_names, dict):
-                        nom = class_names.get(
-                            classe,
-                            class_names.get(str(classe), str(classe))
-                        )
+                if hasattr(modele, "n_neighbors"):
+                    st.write(
+                        "Nombre de voisins KNN :",
+                        modele.n_neighbors
+                    )
+
+                if hasattr(modele, "named_steps"):
+                    st.write(
+                        "Étapes du pipeline :",
+                        list(modele.named_steps.keys())
+                    )
+
+                # =============================================
+                # 8. PROBABILITES
+                # =============================================
+
+                if hasattr(modele, "predict_proba"):
+
+                    probabilites = modele.predict_proba(
+                        caracteristiques
+                    )[0]
+
+                    if hasattr(modele, "classes_"):
+                        classes_modele = modele.classes_
                     else:
-                        try:
-                            nom = class_names[int(classe)]
-                        except (ValueError, TypeError, IndexError):
-                            nom = str(classe)
+                        classes_modele = range(
+                            len(probabilites)
+                        )
 
-                    st.write(f"{nom} : {proba * 100:.1f} %")
-                    st.progress(float(proba))
+                    st.subheader("Résultats par classe")
 
-                st.caption(
-                    "Les probabilités dépendent du modèle. "
-                    "Pour KNN, elles représentent généralement "
-                    "la proportion de voisins de chaque classe."
-                )
+                    for classe, proba in zip(
+                        classes_modele,
+                        probabilites
+                    ):
+                        nom = obtenir_nom_classe(classe)
+
+                        st.write(
+                            f"{nom} : {proba * 100:.2f} %"
+                        )
+
+                        st.progress(float(proba))
+
+                    st.caption(
+                        "Les probabilités représentent les scores "
+                        "fournis par le modèle. Pour KNN, elles "
+                        "correspondent généralement aux proportions "
+                        "de voisins de chaque classe."
+                    )
+
+                else:
+                    st.info(
+                        "Ce modèle ne fournit pas de probabilités "
+                        "avec predict_proba()."
+                    )
 
             st.write("Étape 6 : classification terminée.")
 
-    except Exception as e:
-        st.error("Une erreur est survenue pendant la classification.")
-        st.exception(e)
+        except Exception as e:
+            st.error(
+                "Une erreur est survenue pendant la classification."
+            )
+            st.exception(e)

@@ -6,7 +6,10 @@ import joblib
 
 from PIL import Image
 from skimage.feature import graycomatrix, graycoprops, local_binary_pattern
+import sys
+import streamlit as st
 
+st.write("Version de Python utilisée :", sys.version)
 
 # Configuration de la page
 st.set_page_config(
